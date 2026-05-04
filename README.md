@@ -1,7 +1,8 @@
 # WorldCat-Permalinks
-Script for a colleague to connect with the WorldCat Search API and retrieve permalinks from a list of ISBNs.
+# The idea:
+Based on a list of ISBNs, connect with the WorldCat Search API and retrieve the permalinks of every ISBN.
 
-How to use:
+# How to use:
 1. Open input.xlsx and paste the desired ISBNs into column A, starting from cell A2.
 
 2. Save the file and close it.
