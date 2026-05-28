@@ -15,8 +15,7 @@ Workflow per ISBN:
 Statuskolom-waarden:
   "Holding gevonden (1 OCN)"    - een OCN gevonden, LHR aanwezig
   "Holding gevonden (N OCNs)"   - meerdere OCNs gevonden, eerste met LHR gebruikt
-  "Geen LHR"                    - holding gevonden maar geen LHR bij jouw instelling
-  "Geen holding"                - ISBN niet gevonden voor jouw instelling
+  "Geen holding / geen LHR"     - ISBN niet gevonden voor jouw instelling of geen holding bij jouw instelling
   "Geen ISBN"                   - lege cel overgeslagen
   "API-fout: ..."               - technische fout
 
