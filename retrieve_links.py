@@ -275,7 +275,7 @@ def main():
         df.at[idx, DEFAULT_OCN_COL]    = result["ocn"]
         df.at[idx, DEFAULT_STATUS_COL] = result["status"]
 
-        if result["ocn"]:
+        if result["status"].startswith("Holding gevonden"):
             df.at[idx, "Link"] = "https://eur.on.worldcat.org/oclc/" + result["ocn"]
         else:
             df.at[idx, "Link"] = ""
@@ -298,7 +298,6 @@ def main():
     print(f"""
 Totaal verwerkt              : {total}
 Holding + LHR gevonden       : {found}  (waarvan {multi} met meerdere OCNs)
-Wel holding / geen LHR       : {wel_holding_geen_lhr}
 Geen holding / geen LHR      : {geen_holding_geen_lhr}
 Fouten                       : {errors}
 
