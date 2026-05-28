@@ -162,23 +162,20 @@ def get_ocns_for_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> list |
 # Stap 2: LHR-check per OCN
 # ---------------------------------------------------------------------------
 
-def has_lhr(ocn: str, token_mgr: TokenManager) -> bool | dict:
-    """
-    Vraag /my-holdings op voor dit OCN.
-    Geeft True als er een LHR bestaat, False als niet, of {"error": ...}.
-    """
+def has_lhr(ocn: str, token_mgr: TokenManager) -> str | dict:
     result = _get(MY_HOLDINGS, {"oclcNumber": ocn, "limit": 1}, token_mgr)
 
     if "error" in result:
         return {"error": result["error"]}
     if result["status"] == 404:
-        return False
+        return "geen_holding"
     if result["status"] != 200:
         return {"error": f"HTTP {result['status']} bij LHR-check"}
 
     entries = result["body"].get("detailedHoldings", [])
-    return len(entries) > 0
-
+    if len(entries) == 0:
+        return "geen_holding"  # was: "geen_lhr" — lege lijst = geen holding
+    return "lhr"
 
 # ---------------------------------------------------------------------------
 # Verwerking per ISBN
@@ -188,7 +185,7 @@ def process_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> dict:
     """
     Stap 1: haal OCNs op via bibs-holdings (gefilterd op jouw instelling).
     Stap 2: controleer per OCN of er een LHR aan vastzit.
-    Eerste OCN met LHR wint. Zonder LHR: eerste OCN toch ingevuld.
+    Eerste OCN met LHR wint. Daarna: onderscheid tussen wel/geen holding zonder LHR.
     """
     ocns = get_ocns_for_isbn(isbn, symbol, token_mgr)
     time.sleep(DELAY_SECONDS)
@@ -200,6 +197,7 @@ def process_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> dict:
         return {"ocn": "", "status": "Geen holding"}
 
     ocn_count = len(ocns)
+    last_lhr_result = None  # bijhouden voor de eindconclusie
 
     for ocn in ocns:
         lhr = has_lhr(ocn, token_mgr)
@@ -208,16 +206,18 @@ def process_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> dict:
         if isinstance(lhr, dict):
             return {"ocn": ocns[0], "status": f"API-fout: {lhr['error']}"}
 
-        if lhr:
-            if ocn_count == 1:
-                status = "Holding gevonden (1 OCN)"
-            else:
-                status = f"Holding gevonden ({ocn_count} OCNs)"
+        last_lhr_result = lhr  # sla op voor gebruik ná de loop
+
+        if lhr == "lhr":
+            status = "Holding gevonden (1 OCN)" if ocn_count == 1 else f"Holding gevonden ({ocn_count} OCNs)"
             return {"ocn": ocn, "status": status}
 
-    # Holdings gevonden maar geen LHR - vul toch eerste OCN in
-    return {"ocn": ocns[0], "status": "Geen LHR"}
-
+    # Geen enkel OCN heeft een LHR — onderscheid op basis van laatste check
+    if last_lhr_result == "geen_lhr":
+        return {"ocn": ocns[0], "status": "Wel holding / geen LHR"}
+    else:
+        # "geen_holding": OCN bestond in bibs-holdings maar /my-holdings geeft 404
+        return {"ocn": ocns[0], "status": "Geen holding / geen LHR"}
 
 # ---------------------------------------------------------------------------
 # Hoofdverwerking
@@ -251,12 +251,12 @@ def main():
     df[DEFAULT_OCN_COL]    = ""
     df[DEFAULT_STATUS_COL] = ""
 
-    total   = len(df)
-    found   = 0
-    multi   = 0
-    no_lhr  = 0
-    no_hold = 0
-    errors  = 0
+    total                 = len(df)
+    found                 = 0
+    multi                 = 0
+    wel_holding_geen_lhr  = 0
+    geen_holding_geen_lhr = 0
+    errors                = 0
 
     print(f"\n{total} rijen verwerken...\n")
 
@@ -266,6 +266,7 @@ def main():
         if not raw_isbn or raw_isbn.lower() in ("nan", "none", ""):
             df.at[idx, DEFAULT_OCN_COL]    = ""
             df.at[idx, DEFAULT_STATUS_COL] = "Geen ISBN"
+            df.at[idx, "Link"]             = ""
             continue
 
         isbn   = raw_isbn.replace("-", "").replace(" ", "")
@@ -273,17 +274,21 @@ def main():
 
         df.at[idx, DEFAULT_OCN_COL]    = result["ocn"]
         df.at[idx, DEFAULT_STATUS_COL] = result["status"]
-        df.at[idx, "Link"] = "https://eur.on.worldcat.org/oclc/" + result["ocn"]
+
+        if result["ocn"]:
+            df.at[idx, "Link"] = "https://eur.on.worldcat.org/oclc/" + result["ocn"]
+        else:
+            df.at[idx, "Link"] = ""
 
         s = result["status"]
         if s.startswith("Holding gevonden"):
             found += 1
             if "OCNs)" in s:
                 multi += 1
-        elif s == "Geen LHR":
-            no_lhr += 1
-        elif s == "Geen holding":
-            no_hold += 1
+        elif s == "Wel holding / geen LHR":
+            wel_holding_geen_lhr += 1
+        elif s == "Geen holding / geen LHR":
+            geen_holding_geen_lhr += 1
         elif s.startswith("API-fout"):
             errors += 1
 
@@ -291,11 +296,11 @@ def main():
     df.to_excel(output_path, index=False)
 
     print(f"""
-Totaal verwerkt         : {total}
-Holding + LHR gevonden  : {found}  (waarvan {multi} met meerdere OCNs)
-Geen LHR                : {no_lhr}
-Geen holding            : {no_hold}
-Fouten                  : {errors}
+Totaal verwerkt              : {total}
+Holding + LHR gevonden       : {found}  (waarvan {multi} met meerdere OCNs)
+Wel holding / geen LHR       : {wel_holding_geen_lhr}
+Geen holding / geen LHR      : {geen_holding_geen_lhr}
+Fouten                       : {errors}
 
 Script klaar! Resultaat opgeslagen in: {output_path}
 """)
