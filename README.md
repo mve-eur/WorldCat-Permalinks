@@ -2,6 +2,9 @@
 # The idea:
 Based on a list of ISBNs, connect with the WorldCat Search API and retrieve the permalinks of every ISBN.
 
+# Requirements
+pip install requests pandas openpyxl tqdm cryptography
+
 # How to use:
 1. Open input.xlsx and paste the desired ISBNs into column A, starting from cell A2.
 
