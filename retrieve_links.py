@@ -1,23 +1,18 @@
 #!/usr/bin/env python3
+
+print("Running script...")
+
 """
-WorldCat Search API v2 - ISBN naar OCN holding checker (met LHR-verificatie)
+WorldCat Search API v2 - ISBN naar OCN checker (ebooks)
 
 Gebaseerd op de officiele OpenAPI-spec:
-https://developer.api.oclc.org/docs/wcapi/v2/openapi-external-prod.yaml
+https://developer.api.oclc.org/wcv2
 
 Workflow per ISBN:
-  1. /bibs-holdings?isbn=...&heldBySymbol=...
-       -> alleen OCNs waarop jouw instelling een holding heeft (gefilterd)
-  2. Per OCN: /my-holdings?oclcNumber=...
-       -> controleer of er ook een LHR aan vastzit
-  3. Eerste OCN met LHR wordt opgeslagen; zonder LHR -> eerste OCN toch ingevuld.
-
-Statuskolom-waarden:
-  "Holding gevonden (1 OCN)"    - een OCN gevonden, LHR aanwezig
-  "Holding gevonden (N OCNs)"   - meerdere OCNs gevonden, eerste met LHR gebruikt
-  "Geen holding / geen LHR"     - ISBN niet gevonden voor jouw instelling of geen holding bij jouw instelling
-  "Geen ISBN"                   - lege cel overgeslagen
-  "API-fout: ..."               - technische fout
+    /brief-bibs?q=bn:"{isbn}"&heldBySymbol=...
+    -> OCNs waar jouw instelling een holding op heeft
+    -> 1 OCN: hyperlink in kolom "Link"
+    -> Meerdere OCNs: kommagescheiden in kolom "OCN", hyperlinks elk in eigen kolom
 
 Vereisten:
     pip install requests pandas openpyxl tqdm cryptography
@@ -25,10 +20,12 @@ Vereisten:
 Stel eerst je API-sleutels in via:
     python config.py
 
-Benodigde scopes voor je WSKey (developer.api.oclc.org):
+Benodigde scope voor je WSKey (developer.api.oclc.org):
     wcapi:view_institution_holdings
-    wcapi:view_my_holdings
 
+Gebruik:
+    Leg input.xlsx in dezelfde map als dit script en voer uit:
+    python retrieve_links.py
 """
 
 import sys
@@ -38,6 +35,8 @@ import getpass
 from pathlib import Path
 import requests
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Font
 from tqdm import tqdm
 import config as cfg
 
@@ -46,17 +45,19 @@ import config as cfg
 # ---------------------------------------------------------------------------
 TOKEN_URL    = "https://oauth.oclc.org/token"
 API_BASE     = "https://americas.discovery.api.oclc.org/worldcat/search/v2"
-BIB_HOLDINGS = f"{API_BASE}/bibs-holdings"   # filtert direct op heldBySymbol
-MY_HOLDINGS  = f"{API_BASE}/my-holdings"
+BRIEF_BIB    = f"{API_BASE}/brief-bibs"
+BIB_HOLDINGS = f"{API_BASE}/bibs-holdings"
 
 DELAY_SECONDS = 0.3
 
-SCRIPT_DIR  = Path(__file__).parent
-INPUT_FILE  = SCRIPT_DIR / "input.xlsx"
+SCRIPT_DIR = Path(__file__).parent
+INPUT_FILE = SCRIPT_DIR / "input.xlsx"
 
+DEFAULT_ISBN_COL   = "ISBN"
 DEFAULT_OCN_COL    = "OCN"
 DEFAULT_STATUS_COL = "Status"
 
+WORLDCAT_BASE_URL  = "https://eur.on.worldcat.org/oclc/"
 
 # ---------------------------------------------------------------------------
 # Authenticatie
@@ -130,101 +131,61 @@ def _get(url: str, params: dict, token_mgr: TokenManager) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Stap 1: OCNs ophalen via bibs-holdings (gefilterd op instituut)
-# ---------------------------------------------------------------------------
-
-def get_ocns_for_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> list | dict:
-    """
-    Vraag /bibs-holdings op met isbn + heldBySymbol.
-    Geeft alleen OCNs terug waarop jouw instelling een holding heeft.
-    """
-    result = _get(
-        BIB_HOLDINGS,
-        {"isbn": isbn, "heldBySymbol": symbol, "limit": 50},
-        token_mgr,
-    )
-
-    if "error" in result:
-        return {"error": result["error"]}
-    if result["status"] == 400:
-        msg = result["body"].get("message", "")
-        return {"error": f"Ongeldig verzoek (400): {msg}"}
-    if result["status"] != 200:
-        return {"error": f"HTTP {result['status']}"}
-
-    records = result["body"].get("briefRecords", [])
-    ocns = [str(r["oclcNumber"]) for r in records if r.get("oclcNumber")]
-    return ocns
-
-
-# ---------------------------------------------------------------------------
-# Stap 2: LHR-check per OCN
-# ---------------------------------------------------------------------------
-
-def has_lhr(ocn: str, token_mgr: TokenManager) -> str | dict:
-    result = _get(MY_HOLDINGS, {"oclcNumber": ocn, "limit": 1}, token_mgr)
-
-    if "error" in result:
-        return {"error": result["error"]}
-    if result["status"] == 404:
-        return "geen_holding"
-    if result["status"] != 200:
-        return {"error": f"HTTP {result['status']} bij LHR-check"}
-
-    entries = result["body"].get("detailedHoldings", [])
-    if len(entries) == 0:
-        return "geen_holding"  # was: "geen_lhr" — lege lijst = geen holding
-    return "lhr"
-
-# ---------------------------------------------------------------------------
 # Verwerking per ISBN
 # ---------------------------------------------------------------------------
 
 def process_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> dict:
     """
-    Stap 1: haal OCNs op via bibs-holdings (gefilterd op jouw instelling).
-    Stap 2: controleer per OCN of er een LHR aan vastzit.
-    Eerste OCN met LHR wint. Daarna: onderscheid tussen wel/geen holding zonder LHR.
+    Zoek via brief-bibs alle OCNs op waar jouw instelling een holding op heeft.
+    Geeft {"ocns": [...], "status": "..."} terug.
     """
-    ocns = get_ocns_for_isbn(isbn, symbol, token_mgr)
-    time.sleep(DELAY_SECONDS)
+    result = _get(
+        BRIEF_BIB,
+        {
+            "q":            f'bn:"{isbn}"',
+            "heldBySymbol": symbol,
+            "itemSubType":  "book-digital",
+            "limit":        50,
+        },
+        token_mgr,
+    )
 
-    if isinstance(ocns, dict):
-        return {"ocn": "", "status": f"API-fout: {ocns['error']}"}
+    if "error" in result:
+        return {"ocn": "", "status": f"API-fout: {result['error']}"}
+    if result["status"] == 400:
+        msg = result["body"].get("message", result["body"])
+        return {"ocn": "", "status": f"API-fout: Ongeldig verzoek (400): {msg}"}
+    if result["status"] != 200:
+        return {"ocn": "", "status": f"API-fout: HTTP {result['status']}"}
 
+    records = result["body"].get("briefRecords", [])
+    ocns = [str(r["oclcNumber"]) for r in records if r.get("oclcNumber")]
+ 
     if not ocns:
-        return {"ocn": "", "status": "Geen holding"}
-
-    ocn_count = len(ocns)
-    last_lhr_result = None  # bijhouden voor de eindconclusie
-
-    for ocn in ocns:
-        lhr = has_lhr(ocn, token_mgr)
-        time.sleep(DELAY_SECONDS)
-
-        if isinstance(lhr, dict):
-            return {"ocn": ocns[0], "status": f"API-fout: {lhr['error']}"}
-
-        last_lhr_result = lhr  # sla op voor gebruik ná de loop
-
-        if lhr == "lhr":
-            status = "Holding gevonden (1 OCN)" if ocn_count == 1 else f"Holding gevonden ({ocn_count} OCNs)"
-            return {"ocn": ocn, "status": status}
-
-    # Geen enkel OCN heeft een LHR — onderscheid op basis van laatste check
-    if last_lhr_result == "geen_lhr":
-        return {"ocn": ocns[0], "status": "Wel holding / geen LHR"}
+        return {"ocns": [], "status": "Geen OCN met holding gevonden"}
+ 
+    if len(ocns) == 1:
+        status = "Holding gevonden (1 OCN)"
     else:
-        # "geen_holding": OCN bestond in bibs-holdings maar /my-holdings geeft 404
-        return {"ocn": ocns[0], "status": "Geen holding / geen LHR"}
-
+        status = f"Holding gevonden ({len(ocns)} OCNs)"
+ 
+    return {"ocns": ocns, "status": status}
+ 
+ # ---------------------------------------------------------------------------
+# Opmaak: hyperlink stijl (blauw + onderstreept) toepassen via openpyxl
+# ---------------------------------------------------------------------------
+ 
+def apply_hyperlink_style(ws, col_letter: str, row: int):
+    cell = ws[f"{col_letter}{row}"]
+    cell.font = Font(color="0563C1", underline="single")
+ 
 # ---------------------------------------------------------------------------
 # Hoofdverwerking
 # ---------------------------------------------------------------------------
 
 def main():
     print("=" * 54)
-    print("  WorldCat Search API v2 - ISBN holding checker")
+    print("  WorldCat Search API v2 - ISBN ebook holding checker")
     print("=" * 54)
 
     if not INPUT_FILE.exists():
@@ -243,66 +204,119 @@ def main():
     token_mgr = TokenManager(creds["WSKEY"], creds["WSKEY_SECRET"])
     symbol    = creds["INSTITUTION_SYMBOL"]
 
-    print(f"input.xlsx gevonden!")
+    print(f"\ninput.xlsx gevonden!")
     df = pd.read_excel(INPUT_FILE, dtype=str)
-    isbn_col = "ISBN"
+
+    if DEFAULT_ISBN_COL not in df.columns:
+        print(f"[FOUT] Kolom '{DEFAULT_ISBN_COL}' niet gevonden.")
+        print(f"Beschikbare kolommen: {list(df.columns)}")
+        sys.exit(1)
 
     df[DEFAULT_OCN_COL]    = ""
     df[DEFAULT_STATUS_COL] = ""
+    df["Link"]             = ""
 
-    total                 = len(df)
-    found                 = 0
-    multi                 = 0
-    wel_holding_geen_lhr  = 0
-    geen_holding_geen_lhr = 0
-    errors                = 0
+    total     = len(df)
+    found     = 0
+    multi     = 0
+    not_found = 0
+    errors    = 0
+    
+    # Bijhouden welke rijen meerdere OCNs hebben voor extra kolommen later
+    multi_ocn_rows = {}   # idx -> [ocn1, ocn2, ...]
+    max_ocns = 1
 
-    print(f"\n{total} rijen verwerken...\n")
+    print(f"{total} rijen verwerken...\n")
 
     for idx, row in tqdm(df.iterrows(), total=total, unit="ISBN"):
-        raw_isbn = str(row[isbn_col]).strip()
-
+        raw_isbn = str(row[DEFAULT_ISBN_COL]).strip()
+ 
         if not raw_isbn or raw_isbn.lower() in ("nan", "none", ""):
-            df.at[idx, DEFAULT_OCN_COL]    = ""
             df.at[idx, DEFAULT_STATUS_COL] = "Geen ISBN"
-            df.at[idx, "Link"]             = ""
             continue
-
+ 
         isbn   = raw_isbn.replace("-", "").replace(" ", "")
         result = process_isbn(isbn, symbol, token_mgr)
-
-        df.at[idx, DEFAULT_OCN_COL]    = result["ocn"]
-        df.at[idx, DEFAULT_STATUS_COL] = result["status"]
-
-        if result["status"].startswith("Holding gevonden"):
-            df.at[idx, "Link"] = "https://eur.on.worldcat.org/oclc/" + result["ocn"]
+        time.sleep(DELAY_SECONDS)
+ 
+        ocns   = result["ocns"]
+        status = result["status"]
+ 
+        df.at[idx, DEFAULT_STATUS_COL] = status
+ 
+        if not ocns:
+            continue
+ 
+        # OCN-kolom: altijd alle OCNs kommagescheiden
+        df.at[idx, DEFAULT_OCN_COL] = ", ".join(ocns)
+ 
+        if len(ocns) == 1:
+            # Eén OCN: hyperlink in kolom "Link"
+            df.at[idx, "Link"] = f'=HYPERLINK("{WORLDCAT_BASE_URL}{ocns[0]}","{ocns[0]}")'
         else:
-            df.at[idx, "Link"] = ""
-
-        s = result["status"]
+            # Meerdere OCNs: hyperlinks komen elk in eigen kolom (Link 1, Link 2, ...)
+            multi_ocn_rows[idx] = ocns
+            max_ocns = max(max_ocns, len(ocns))
+ 
+        s = status
         if s.startswith("Holding gevonden"):
             found += 1
             if "OCNs)" in s:
                 multi += 1
-        elif s == "Wel holding / geen LHR":
-            wel_holding_geen_lhr += 1
-        elif s == "Geen holding / geen LHR":
-            geen_holding_geen_lhr += 1
+        elif s == "Geen OCN met holding gevonden":
+            not_found += 1
         elif s.startswith("API-fout"):
             errors += 1
-
+ 
+    # Voeg Link-kolommen toe voor meerdere OCNs
+    if multi_ocn_rows:
+        for i in range(1, max_ocns + 1):
+            col = f"Link {i}"
+            if col not in df.columns:
+                df[col] = ""
+        for idx, ocns in multi_ocn_rows.items():
+            df.at[idx, "Link"] = ""   # leeglaten, per-kolom links worden gebruikt
+            for i, ocn in enumerate(ocns, 1):
+                df.at[idx, f"Link {i}"] = f'=HYPERLINK("{WORLDCAT_BASE_URL}{ocn}","{ocn}")'
+ 
+    # Opslaan
     output_path = SCRIPT_DIR / "output.xlsx"
     df.to_excel(output_path, index=False)
-
+ 
+    # Hyperlink opmaak toepassen via openpyxl
+    wb = load_workbook(output_path)
+    ws = wb.active
+ 
+    # Zoek kolomletters op basis van koptekst
+    header = {cell.value: cell.column_letter for cell in ws[1]}
+ 
+    for excel_row in range(2, len(df) + 2):
+        # Kolom "Link" (enkelvoudig)
+        if "Link" in header:
+            cell = ws[f"{header['Link']}{excel_row}"]
+            if cell.value and str(cell.value).startswith("=HYPERLINK"):
+                cell.font = Font(color="0563C1", underline="single")
+ 
+        # Kolommen "Link 1", "Link 2", ...
+        for i in range(1, max_ocns + 1):
+            col_name = f"Link {i}"
+            if col_name in header:
+                cell = ws[f"{header[col_name]}{excel_row}"]
+                if cell.value and str(cell.value).startswith("=HYPERLINK"):
+                    cell.font = Font(color="0563C1", underline="single")
+ 
+    wb.save(output_path)
+ 
     print(f"""
-Totaal verwerkt              : {total}
-Holding + LHR gevonden       : {found}  (waarvan {multi} met meerdere OCNs)
-Geen holding / geen LHR      : {geen_holding_geen_lhr}
-Fouten                       : {errors}
-
-Script klaar! Resultaat opgeslagen in: {output_path}
+Totaal verwerkt                 : {total}
+Holding gevonden                : {found}  (waarvan {multi} met meerdere OCNs)
+Geen OCN met holding gevonden   : {not_found}
+Fouten                          : {errors}
+ 
+Resultaat opgeslagen in         : {output_path}
 """)
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
+ 
