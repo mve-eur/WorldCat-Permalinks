@@ -193,10 +193,15 @@ def main():
         sys.exit(1)
 
     if not cfg.credentials_exist():
-        print("\n[FOUT] Geen credentials gevonden. Stel ze in via: python config.py")
+        print("\n[FOUT] Bestand .env niet gevonden.")
+        print("Maak een .env-bestand aan in dezelfde map als het script met WSKEY, WSKEY_SECRET en INSTITUTION_SYMBOL.")
         sys.exit(1)
 
-    creds    = cfg.load()
+    try:
+        creds = cfg.load()
+    except ValueError as exc:
+        print(f"\n[FOUT] {exc}")
+        sys.exit(1)
 
     token_mgr = TokenManager(creds["WSKEY"], creds["WSKEY_SECRET"])
     symbol    = creds["INSTITUTION_SYMBOL"]
