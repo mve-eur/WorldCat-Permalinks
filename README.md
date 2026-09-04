@@ -6,25 +6,27 @@ Based on a list of ISBNs, connect with the WorldCat Search API and retrieve the 
 pip install requests pandas openpyxl tqdm cryptography
 
 # How to use:
-1. Open input.xlsx and paste the desired ISBNs into column A, starting from cell A2.
+1. Copy env_example.txt and rename it as ".env".
 
-2. Save the file and close it.
+2. Fill in the API credentials: WSKEY (OCLC calls this 'Client ID'), WSKEY_SECRET (OCLC calls this 'Secret'), and INSTITUTION_SYMBOL.
 
-3. Navigate with your mouse to the folder that contains both the script and input.xlsx. Right-click in the folder and select “Open in Terminal.”
+3. Open input.xlsx and paste the desired ISBNs into column A, starting from cell A2.
 
-4. Type or copy/paste:
+4. Save the file and close it.
+
+5. Navigate with your mouse to the folder that contains both the script and input.xlsx. Right-click in the folder and select “Open in Terminal.”
+
+6. Type or copy/paste:
    python retrieve_links.py
+   Warning: You cannot have either excel file open while running the script. Doing so will give you an error code [Permission denied]
 
-5. Enter the password when prompted (this may take a moment).
-   Note: The password is not visible while typing. If you enter an incorrect password, the script will stop. No worries—simply repeat step 4.
-
-6. Wait until the script has finished running 🙂
+7. Wait until the script has finished running 🙂
    You will know the script is complete when you see the following message:
    
    Script finished! Result saved in: C:\Users\.....
    PS C:\Users\.....
 
-7. Open output.xlsx. You will now see three additional columns: OCN, Status, and Link.
+8. Open output.xlsx. You will now see three additional columns: OCN, Status, and Link.
    The Status column can contain various values, including error messages or multiple LHRs.
 
    
