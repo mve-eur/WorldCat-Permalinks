@@ -11,7 +11,7 @@ def credentials_exist():
 
 
 def load():
-    load_dotenv(ENV_FILE)
+    load_dotenv(ENV_FILE, override=True)
 
     wskey = os.getenv("WSKEY")
     secret = os.getenv("WSKEY_SECRET")
