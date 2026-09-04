@@ -15,7 +15,7 @@ Workflow per ISBN:
     -> Meerdere OCNs: kommagescheiden in kolom "OCN", hyperlinks elk in eigen kolom
 
 Vereisten:
-    pip install requests pandas openpyxl tqdm cryptography
+    pip install requests pandas openpyxl tqdm python-dotenv
 
 Stel eerst je API-sleutels in via:
     python config.py
@@ -31,7 +31,6 @@ Gebruik:
 import sys
 import time
 import base64
-import getpass
 from pathlib import Path
 import requests
 import pandas as pd
