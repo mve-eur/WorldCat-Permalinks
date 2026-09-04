@@ -197,9 +197,7 @@ def main():
         print("\n[FOUT] Geen credentials gevonden. Stel ze in via: python config.py")
         sys.exit(1)
 
-    password = getpass.getpass("\nWachtwoord voor API-sleutels: ")
-    creds    = cfg.load(password)
-    del password
+    creds    = cfg.load()
 
     token_mgr = TokenManager(creds["WSKEY"], creds["WSKEY_SECRET"])
     symbol    = creds["INSTITUTION_SYMBOL"]
