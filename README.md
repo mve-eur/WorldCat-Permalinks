@@ -3,7 +3,7 @@
 Based on a list of ISBNs, connect with the WorldCat Search API and retrieve the permalinks of every ISBN.
 
 # Requirements
-pip install requests pandas openpyxl tqdm cryptography
+pip install requests pandas openpyxl tqdm python-dotenv
 
 # How to use:
 1. Copy env_example.txt and rename it as ".env".
