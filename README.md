@@ -2,8 +2,15 @@
 # The idea:
 Based on a list of ISBNs, connect with the WorldCat Search API and retrieve the permalinks of every ISBN.
 
-# Requirements
-pip install requests pandas openpyxl tqdm python-dotenv
+# Requirements:
+    pip install requests pandas openpyxl tqdm python-dotenv
+
+# Configuration:
+    Create a .env-file and copy the data fields from env_example.txt.
+    Fill in the data.
+
+# Necessary scope for WSKey (developer.api.oclc.org):
+    wcapi:view_institution_holdings
 
 # How to use:
 1. Download all files and unzip all files on your local computer.
@@ -30,5 +37,3 @@ pip install requests pandas openpyxl tqdm python-dotenv
 
 9. Open output.xlsx. You will now see three additional columns: OCN, Status, and Link.
    The Status column can contain various values, including error messages or multiple LHRs.
-
-   
