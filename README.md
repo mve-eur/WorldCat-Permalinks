@@ -6,8 +6,8 @@ Based on a list of ISBNs, connect with the WorldCat Search API and retrieve the 
     pip install requests pandas openpyxl tqdm python-dotenv
 
 # Configuration:
-    Create a .env-file and copy the data fields from env_example.txt.
-    Fill in the data.
+Create a .env-file and copy the data fields from env_example.txt.
+Fill in the data.
 
 # Necessary scope for WSKey (developer.api.oclc.org):
     wcapi:view_institution_holdings
