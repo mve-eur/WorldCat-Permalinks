@@ -17,9 +17,6 @@ Workflow per ISBN:
 Vereisten:
     pip install requests pandas openpyxl tqdm python-dotenv
 
-Stel eerst je API-sleutels in via:
-    python config.py
-
 Benodigde scope voor je WSKey (developer.api.oclc.org):
     wcapi:view_institution_holdings
 
@@ -31,13 +28,14 @@ Gebruik:
 import sys
 import time
 import base64
+import os
 from pathlib import Path
 import requests
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font
 from tqdm import tqdm
-import config as cfg
+from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
 # Instellingen
@@ -57,6 +55,16 @@ DEFAULT_OCN_COL    = "OCN"
 DEFAULT_STATUS_COL = "Status"
 
 WORLDCAT_BASE_URL  = "https://eur.on.worldcat.org/oclc/"
+
+# ---------------------------------------------------------------------------
+# Get credentials from environment variables
+# ---------------------------------------------------------------------------
+
+load_dotenv()
+
+WSKEY = os.getenv("WSKEY")
+WSKEY_SECRET = os.getenv("WSKEY_SECRET")
+INSTITUTION_SYMBOL = os.getenv("INSTITUTION_SYMBOL")
 
 # ---------------------------------------------------------------------------
 # Authenticatie
@@ -150,12 +158,12 @@ def process_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> dict:
     )
 
     if "error" in result:
-        return {"ocn": "", "status": f"API-fout: {result['error']}"}
+        return {"ocns": [], "status": f"API-fout: {result['error']}"}
     if result["status"] == 400:
         msg = result["body"].get("message", result["body"])
-        return {"ocn": "", "status": f"API-fout: Ongeldig verzoek (400): {msg}"}
+        return {"ocns": [], "status": f"API-fout: Ongeldig verzoek (400): {msg}"}
     if result["status"] != 200:
-        return {"ocn": "", "status": f"API-fout: HTTP {result['status']}"}
+        return {"ocns": [], "status": f"API-fout: HTTP {result['status']}"}
 
     records = result["body"].get("briefRecords", [])
     ocns = [str(r["oclcNumber"]) for r in records if r.get("oclcNumber")]
@@ -167,16 +175,19 @@ def process_isbn(isbn: str, symbol: str, token_mgr: TokenManager) -> dict:
         status = "Holding gevonden (1 OCN)"
     else:
         status = f"Holding gevonden ({len(ocns)} OCNs)"
+    
+    first = records[0]
+    title = first.get("title", "")
+    author = first.get("creator", "")
+    publisher = first.get("publisher", "")
+    year = first.get("date", "")
  
-    return {"ocns": ocns, "status": status}
- 
- # ---------------------------------------------------------------------------
-# Opmaak: hyperlink stijl (blauw + onderstreept) toepassen via openpyxl
-# ---------------------------------------------------------------------------
- 
-def apply_hyperlink_style(ws, col_letter: str, row: int):
-    cell = ws[f"{col_letter}{row}"]
-    cell.font = Font(color="0563C1", underline="single")
+    return {"ocns": ocns, 
+            "title": title,
+            "author": author,
+            "publisher": publisher,
+            "year": year,
+            "status": status}
  
 # ---------------------------------------------------------------------------
 # Hoofdverwerking
@@ -187,27 +198,27 @@ def main():
     print("  WorldCat Search API v2 - ISBN ebook holding checker")
     print("=" * 54)
 
+    print("[INFO] Configuratie laden...")
+
     if not INPUT_FILE.exists():
         print(f"\n[FOUT] Bestand niet gevonden: {INPUT_FILE}")
         print("Zet input.xlsx in dezelfde map als dit script.")
         sys.exit(1)
 
-    if not cfg.credentials_exist():
-        print("\n[FOUT] Bestand .env niet gevonden.")
-        print("Maak een .env-bestand aan in dezelfde map als het script met WSKEY, WSKEY_SECRET en INSTITUTION_SYMBOL.")
+    if not all([WSKEY, WSKEY_SECRET, INSTITUTION_SYMBOL]):
+        print("\n[FOUT] Ontbrekende variabelen in .env.")
+        print("Controleer WSKEY, WSKEY_SECRET en INSTITUTION_SYMBOL.")
         sys.exit(1)
 
-    try:
-        creds = cfg.load()
-    except ValueError as exc:
-        print(f"\n[FOUT] {exc}")
-        sys.exit(1)
+    print("[INFO] OAuth-token wordt opgehaald...")
+    token_mgr = TokenManager(WSKEY, WSKEY_SECRET)
+    token_mgr.get()
+    symbol = INSTITUTION_SYMBOL.strip()
+    print(f"[INFO] OAuth-token succesvol opgehaald.")
 
-    token_mgr = TokenManager(creds["WSKEY"], creds["WSKEY_SECRET"])
-    symbol    = creds["INSTITUTION_SYMBOL"]
-
-    print(f"\ninput.xlsx gevonden!")
+    print("[INFO] input.xlsx openen...")
     df = pd.read_excel(INPUT_FILE, dtype=str)
+    print(f"[INFO] {len(df)} rijen gevonden.")
 
     if DEFAULT_ISBN_COL not in df.columns:
         print(f"[FOUT] Kolom '{DEFAULT_ISBN_COL}' niet gevonden.")
@@ -217,6 +228,10 @@ def main():
     df[DEFAULT_OCN_COL]    = ""
     df[DEFAULT_STATUS_COL] = ""
     df["Link"]             = ""
+    df["Titel"]            = ""
+    df["Auteur"]           = ""
+    df["Publisher"]        = ""
+    df["Jaar"]             = ""
 
     total     = len(df)
     found     = 0
@@ -245,6 +260,20 @@ def main():
         status = result["status"]
  
         df.at[idx, DEFAULT_STATUS_COL] = status
+        df.at[idx, "Titel"]    = result.get("title", "")
+        df.at[idx, "Auteur"]   = result.get("author", "")
+        df.at[idx, "Publisher"] = result.get("publisher", "")
+        df.at[idx, "Jaar"]      = result.get("year", "")
+
+        s = status
+        if s.startswith("Holding gevonden"):
+            found += 1
+            if "OCNs)" in s:
+                multi += 1
+        elif s.startswith("Geen OCN"):
+            not_found += 1
+        elif s.startswith("API-fout"):
+            errors += 1
  
         if not ocns:
             continue
@@ -260,16 +289,6 @@ def main():
             multi_ocn_rows[idx] = ocns
             max_ocns = max(max_ocns, len(ocns))
  
-        s = status
-        if s.startswith("Holding gevonden"):
-            found += 1
-            if "OCNs)" in s:
-                multi += 1
-        elif s == "Geen OCN met holding gevonden":
-            not_found += 1
-        elif s.startswith("API-fout"):
-            errors += 1
- 
     # Voeg Link-kolommen toe voor meerdere OCNs
     if multi_ocn_rows:
         for i in range(1, max_ocns + 1):
@@ -282,7 +301,30 @@ def main():
                 df.at[idx, f"Link {i}"] = f'=HYPERLINK("{WORLDCAT_BASE_URL}{ocn}","{ocn}")'
  
     # Opslaan
+    # Lege scheidingskolom
+    df[""] = ""
+
+    # Dynamisch alle Link 1, Link 2, ... kolommen ophalen
+    multi_link_columns = sorted(
+        [col for col in df.columns if col.startswith("Link ")]
+    )
+
+    ordered_columns = [
+        "Status",
+        "OCN",
+        "ISBN",
+        "Link",
+        "Titel",
+        "Auteur",
+        "Publisher",
+        "Jaar",
+        "",
+    ] + multi_link_columns
+
+    df = df[ordered_columns]
+
     output_path = SCRIPT_DIR / "output.xlsx"
+    print("[INFO] Excelbestand schrijven...")
     df.to_excel(output_path, index=False)
  
     # Hyperlink opmaak toepassen via openpyxl
