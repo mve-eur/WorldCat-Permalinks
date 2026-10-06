@@ -5,12 +5,12 @@ Based on a list of ISBNs, connect with the WorldCat Search API and retrieve the 
 # Requirements:
     pip install requests pandas openpyxl tqdm python-dotenv
 
+# Necessary scope for WSKey (developer.api.oclc.org):
+    wcapi:view_institution_holdings
+
 # Configuration:
 Create a .env-file and copy the data fields from env_example.txt.
 Fill in the data.
-
-# Necessary scope for WSKey (developer.api.oclc.org):
-    wcapi:view_institution_holdings
 
 # How to use:
 1. Download all files and unzip all files on your local computer.
